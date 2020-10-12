@@ -1,0 +1,8 @@
+{
+  "name": "vue-next-benchmarks",
+  "version": "1.0.0",
+  "description": "Benchmarks Vue3 core features, to keep track of performance",
+  "main": "index.js",
+  "author": "Bas van Meurs, bvanmeurs1985@gmail.com",
+  "license": "MIT"
+}
