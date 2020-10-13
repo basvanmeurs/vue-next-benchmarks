@@ -101,5 +101,23 @@ function go() {
     });
   });
 
+  bench(() => {
+    const refs = [];
+    for (let i = 0, n = 1000; i < n; i++) {
+      refs.push(ref(i));
+    }
+    const c = computed(() => {
+      let total = 0;
+      refs.forEach(ref => total += ref.value);
+      return total;
+    });
+    let i = 0;
+    const n = refs.length;
+    return suite.add("1000 refs, 1 computed", () => {
+      refs[i++ % n].value++;
+      const v = c.value;
+    });
+  });
+
   return suite;
 }
