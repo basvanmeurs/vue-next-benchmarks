@@ -12,6 +12,9 @@ const abortButton = document.getElementById("abort");
 const startButton = document.getElementById("start");
 const results = document.getElementById("results");
 
+const standaloneInput = document.getElementById("standalone");
+const iterationsInput = document.getElementById("iterations");
+
 // This allows aborting and outputting while tests are being run.
 Benchmark.options.async = true;
 
@@ -38,17 +41,22 @@ function addResult(name, result, fn) {
 // @see https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
 const semverRegex = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
-window.start = function() {
-  const benchmarks = benchmarksInput.value.trim() !== "" ? benchmarksInput.value.split(",") : available;
-
-  document.getElementById("started").style.display = "block";
-
+function getUrl() {
   let url = urlInput.value;
   if (url.trim() === "") {
     url = "vue.global.js";
   } else if (semverRegex.test(url)) {
     url = `https://cdnjs.cloudflare.com/ajax/libs/vue/${url}/vue.global.js`;
   }
+  return url;
+}
+
+window.start = function() {
+  const benchmarks = benchmarksInput.value.trim() !== "" ? benchmarksInput.value.split(",") : available;
+
+  document.getElementById("started").style.display = "block";
+
+  let url = getUrl();
 
   log("Use Vue3: " + url);
   log("Benchmarks: " + benchmarks.join(","));
@@ -112,6 +120,57 @@ async function runTests(benchmarks) {
   }
 }
 
+window.standalone = function() {
+  const v = standaloneInput.value;
+  const index = v.indexOf(":");
+  if (index === -1) {
+    alert("Format: {name}:{benchmark}");
+  } else {
+    const name = v.substr(0, index).trim();
+    const bench = v.substr(index + 1).trim();
+    startStandalone(name, bench);
+  }
+}
+
+async function startStandalone(name, benchmarkName) {
+  let url = getUrl();
+
+  log("Use Vue3: " + url);
+  log("Benchmarks: " + name + ":" + benchmarkName);
+
+  await injectScript(url);
+
+  window.go = undefined;
+  await injectScript(`src/${name}.js`);
+
+  suite = go();
+
+  let bench;
+  for (const key in suite) {
+    if (parseInt(key) >= 0) {
+      const b = suite[key];
+      if (b.name === benchmarkName) {
+        bench = b;
+      }
+    }
+  }
+
+  if (!bench) {
+    alert("Benchmark not found.");
+    return;
+  }
+
+  const iterations = parseInt(iterationsInput.value.replace(/_/g, "")) || 1e4;
+  log("Iterations: " + iterations);
+
+  const f = bench.fn;
+  console.profile(benchmarkName);
+  for (let i = 0; i < iterations; i++) {
+    f();
+  }
+  console.profileEnd(benchmarkName);
+}
+
 function injectScript(src) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -121,3 +180,5 @@ function injectScript(src) {
     document.head.appendChild(script);
   });
 }
+
+

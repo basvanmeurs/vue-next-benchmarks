@@ -72,6 +72,12 @@
     <button id="start" onclick="start()">Start</button>
     <button id="abort" onclick="abort()" disabled>Abort</button>
 
+    <label for="standalone">profile run</label>
+    <input type="text" id="standalone" placeholder="Example: ref:write ref" value="" />
+    <label for="iterations">profile iterations</label>
+    <input type="text" id="iterations" value="100_000" />
+    <button onclick="standalone()">Start profile run</button>
+
     <p>Link usage: <pre>?v=3.0.0-rc.12&b=ref,computed</pre></p>
 
     <div id="started" style="display: none">
