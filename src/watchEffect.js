@@ -29,7 +29,7 @@ function go() {
       const v2 = v.value;
     });
     let i = 0;
-    return suite.add("update ref to trigger watchEffect (scheduled but not executed)", function(deferred) {
+    return suite.add("update ref to trigger watchEffect (executed)", function(deferred) {
       v.value = i++;
       Vue.nextTick(() => deferred.resolve());
     }, { defer: true });
