@@ -1,6 +1,6 @@
 const queryParams = new URLSearchParams(window.location.search);
 const version = queryParams.get("v");
-const available = ["ref", "computed", "watch", "watchEffect", "mix"];
+const available = ["ref", "computed", "reactiveObject", "reactiveMap", "watch", "watchEffect", "mix"];
 
 const urlInput = document.getElementById("url");
 urlInput.value = version || "3.0.0";
@@ -17,6 +17,12 @@ const iterationsInput = document.getElementById("iterations");
 
 // This allows aborting and outputting while tests are being run.
 Benchmark.options.async = true;
+
+const maxTime = document.getElementById("maxTime");
+maxTime.onchange = function() {
+  Benchmark.options.maxTime = parseFloat(maxTime.value) || 0;
+}
+
 
 function log(...args) {
   console.log(...args);
