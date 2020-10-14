@@ -30,17 +30,18 @@ function log(...args) {
 
 function addBenchmark(name) {
   const tr = document.createElement('tr');
-  tr.innerHTML += `<th colspan="3" class="benchmark"></th>`
+  tr.innerHTML += `<th colspan="2" class="benchmark"></th>`
   tr.firstElementChild.innerText = name;
   results.appendChild(tr);
 }
 
 function addResult(name, result, fn) {
   const tr = document.createElement('tr');
-  tr.innerHTML += `<th></th><td></td><td class="code"></td>`
-  tr.children.item(0).innerText = name;
+  tr.innerHTML += `<th><span class="benchmark-name"></span></th><td></td>`
+  const span = tr.children.item(0).firstElementChild;
+  span.innerText = name;
+  span.setAttribute("title", fn.toString());
   tr.children.item(1).innerText = result;
-  tr.children.item(2).innerText = fn.toString();
   results.appendChild(tr);
 }
 
@@ -68,7 +69,7 @@ window.start = function() {
   log("Benchmarks: " + benchmarks.join(","));
   log("Available: " + available.join(","));
 
-  results.innerHTML = `<tr><th>Benchmark</th><th>Result</th><th>Code</th></tr>`;
+  results.innerHTML = `<tr><th>Benchmark (hover to show code)</th><th>Result</th></tr>`;
 
   abortButton.removeAttribute("disabled");
   startButton.setAttribute("disabled", "disabled");
