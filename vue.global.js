@@ -362,6 +362,232 @@ var Vue = (function (exports) {
                               : {}));
   };
 
+  const targetMap = new WeakMap();
+  class ReactiveEffect {
+      constructor(raw, allowRecurse, scheduler, options) {
+          this.raw = raw;
+          this.scheduler = scheduler;
+          this.id = uid++;
+          this.deps = [];
+          if (allowRecurse) {
+              this.allowRecurse = true;
+          }
+          if (options) {
+              this.options = options;
+          }
+      }
+      setOnStop(func) {
+          if (this.options === EMPTY_OBJ) {
+              this.options = {};
+          }
+          this.options.onStop = func;
+      }
+      run() {
+          if (!this.active) {
+              return this.scheduler ? undefined : this.raw();
+          }
+          if (!effectStack.includes(this)) {
+              cleanup(this);
+              try {
+                  enableTracking();
+                  effectStack.push(this);
+                  activeEffect = this;
+                  return this.raw();
+              }
+              finally {
+                  effectStack.pop();
+                  resetTracking();
+                  const n = effectStack.length;
+                  activeEffect = n ? effectStack[n - 1] : undefined;
+              }
+          }
+      }
+      get func() {
+          if (!this.runner) {
+              const runner = () => {
+                  return this.run();
+              };
+              runner.effect = this;
+              runner.allowRecurse = this.allowRecurse;
+              this.runner = runner;
+          }
+          return this.runner;
+      }
+  }
+  ReactiveEffect.prototype.active = true;
+  ReactiveEffect.prototype.allowRecurse = false;
+  ReactiveEffect.prototype.options = EMPTY_OBJ;
+  function createReactiveEffect(fn, allowRecurse, scheduler, options) {
+      return new ReactiveEffect(fn, allowRecurse, scheduler, options);
+  }
+  const effectStack = [];
+  let activeEffect;
+  const ITERATE_KEY = Symbol( 'iterate' );
+  const MAP_KEY_ITERATE_KEY = Symbol( 'Map key iterate' );
+  function isEffect(fn) {
+      return fn && !!fn.effect;
+  }
+  function effect(fn, scheduler = undefined, allowRecurse = false, lazy = false, options = undefined) {
+      if (isEffect(fn)) {
+          fn = fn.effect.raw;
+      }
+      const effect = createReactiveEffect(fn, allowRecurse, scheduler, options);
+      if (!lazy) {
+          effect.run();
+      }
+      return effect;
+  }
+  function stop(effect) {
+      if (effect.active) {
+          cleanup(effect);
+          if (effect.options.onStop) {
+              effect.options.onStop();
+          }
+          effect.active = false;
+      }
+  }
+  let uid = 0;
+  function cleanup(effect) {
+      const { deps } = effect;
+      if (deps.length) {
+          for (let i = 0; i < deps.length; i++) {
+              deps[i].delete(effect);
+          }
+          deps.length = 0;
+      }
+  }
+  let shouldTrack = true;
+  const trackStack = [];
+  function pauseTracking() {
+      trackStack.push(shouldTrack);
+      shouldTrack = false;
+  }
+  function enableTracking() {
+      trackStack.push(shouldTrack);
+      shouldTrack = true;
+  }
+  function resetTracking() {
+      const last = trackStack.pop();
+      shouldTrack = last === undefined ? true : last;
+  }
+  function track(target, type, key) {
+      if (!isTracking()) {
+          return;
+      }
+      let depsMap = targetMap.get(target);
+      if (!depsMap) {
+          targetMap.set(target, (depsMap = new Map()));
+      }
+      let dep = depsMap.get(key);
+      if (!dep) {
+          depsMap.set(key, (dep = new Set()));
+      }
+      const eventInfo =  { effect: activeEffect, target, type, key } ;
+      trackEffects(dep, eventInfo);
+  }
+  function isTracking() {
+      return shouldTrack && activeEffect !== undefined;
+  }
+  function trackEffects(dep, debuggerEventExtraInfo) {
+      const effect = activeEffect;
+      if (!dep.has(effect)) {
+          dep.add(effect);
+          effect.deps.push(dep);
+          if ( effect.options.onTrack) {
+              effect.options.onTrack(Object.assign({ effect }, debuggerEventExtraInfo));
+          }
+      }
+  }
+  function trigger(target, type, key, newValue, oldValue, oldTarget) {
+      const depsMap = targetMap.get(target);
+      if (!depsMap) {
+          // never been tracked
+          return;
+      }
+      let sets = [];
+      if (type === "clear" /* CLEAR */) {
+          // collection being cleared
+          // trigger all effects for target
+          sets = [...depsMap.values()];
+      }
+      else if (key === 'length' && isArray(target)) {
+          depsMap.forEach((dep, key) => {
+              if (key === 'length' || key >= newValue) {
+                  sets.push(dep);
+              }
+          });
+      }
+      else {
+          // schedule runs for SET | ADD | DELETE
+          if (key !== void 0) {
+              sets.push(depsMap.get(key));
+          }
+          // also run for iteration key on ADD | DELETE | Map.SET
+          switch (type) {
+              case "add" /* ADD */:
+                  if (!isArray(target)) {
+                      sets.push(depsMap.get(ITERATE_KEY));
+                      if (isMap(target)) {
+                          sets.push(depsMap.get(MAP_KEY_ITERATE_KEY));
+                      }
+                  }
+                  else if (isIntegerKey(key)) {
+                      // new index added to array -> length changes
+                      sets.push(depsMap.get('length'));
+                  }
+                  break;
+              case "delete" /* DELETE */:
+                  if (!isArray(target)) {
+                      sets.push(depsMap.get(ITERATE_KEY));
+                      if (isMap(target)) {
+                          sets.push(depsMap.get(MAP_KEY_ITERATE_KEY));
+                      }
+                  }
+                  break;
+              case "set" /* SET */:
+                  if (isMap(target)) {
+                      sets.push(depsMap.get(ITERATE_KEY));
+                  }
+                  break;
+          }
+      }
+      const eventInfo =  { target, type, key, newValue, oldValue, oldTarget } ;
+      triggerMultiEffects(sets, eventInfo);
+  }
+  function triggerMultiEffects(depSets, debuggerEventExtraInfo) {
+      const sets = depSets.filter((set) => !!set);
+      if (sets.length > 1) {
+          triggerEffects(concatSets(sets), debuggerEventExtraInfo);
+      }
+      else if (sets.length === 1) {
+          triggerEffects(sets[0], debuggerEventExtraInfo);
+      }
+  }
+  function concatSets(sets) {
+      const all = [].concat(...sets.map((s) => [...s]));
+      const deduped = new Set(all);
+      return deduped;
+  }
+  function triggerEffects(dep, debuggerEventExtraInfo) {
+      const run = (effect) => {
+          if ( effect.options.onTrigger) {
+              effect.options.onTrigger(Object.assign({ effect }, debuggerEventExtraInfo));
+          }
+          if (effect.scheduler) {
+              effect.scheduler(effect.func);
+          }
+          else {
+              effect.run();
+          }
+      };
+      const immutableDeps = [...dep];
+      immutableDeps.forEach(effect => {
+          if (effect !== activeEffect || effect.allowRecurse) {
+              run(effect);
+          }
+      });
+  }
+
   const builtInSymbols = new Set(Object.getOwnPropertyNames(Symbol)
       .map(key => Symbol[key])
       .filter(isSymbol));
@@ -859,283 +1085,32 @@ var Vue = (function (exports) {
       return isReactive(value) || isReadonly(value);
   }
   function toRaw(observed) {
-      return ((observed && toRaw(observed["__v_raw" /* RAW */])) || observed);
+      const raw = observed && observed["__v_raw" /* RAW */];
+      return raw ? toRaw(raw) : observed;
   }
   function markRaw(value) {
       def(value, "__v_skip" /* SKIP */, true);
       return value;
   }
 
-  const targetMap = new WeakMap();
-  class ReactiveEffect {
-      constructor(raw, allowRecurse, scheduler, options) {
-          this.raw = raw;
-          this.scheduler = scheduler;
-          this.id = uid++;
-          this.deps = [];
-          if (allowRecurse) {
-              this.allowRecurse = true;
+  function trackRefValue(ref) {
+      if (isTracking()) {
+          ref = toRaw(ref);
+          const eventInfo =  { target: ref, type: "get" /* GET */, key: 'value' } ;
+          if (!ref.dep) {
+              // This ref could be wrapped in a readonly proxy.
+              ref.dep = new Set();
           }
-          if (options) {
-              this.options = options;
-          }
-      }
-      setOnStop(func) {
-          if (this.options === EMPTY_OBJ) {
-              this.options = {};
-          }
-          this.options.onStop = func;
-      }
-      run() {
-          if (!this.active) {
-              return this.scheduler ? undefined : this.raw();
-          }
-          if (!effectStack.includes(this)) {
-              cleanup(this);
-              try {
-                  enableTracking();
-                  effectStack.push(this);
-                  activeEffect = this;
-                  return this.raw();
-              }
-              finally {
-                  effectStack.pop();
-                  resetTracking();
-                  const n = effectStack.length;
-                  activeEffect = n ? effectStack[n - 1] : undefined;
-              }
-          }
-      }
-      get func() {
-          if (!this.runner) {
-              const runner = () => {
-                  return this.run();
-              };
-              runner.effect = this;
-              runner.allowRecurse = this.allowRecurse;
-              this.runner = runner;
-          }
-          return this.runner;
+          trackEffects(ref.dep, eventInfo);
       }
   }
-  ReactiveEffect.prototype.active = true;
-  ReactiveEffect.prototype.allowRecurse = false;
-  ReactiveEffect.prototype.options = EMPTY_OBJ;
-  function createReactiveEffect(fn, allowRecurse, scheduler, options) {
-      return new ReactiveEffect(fn, allowRecurse, scheduler, options);
-  }
-  const effectStack = [];
-  let activeEffect;
-  const ITERATE_KEY = Symbol( 'iterate' );
-  const MAP_KEY_ITERATE_KEY = Symbol( 'Map key iterate' );
-  function isEffect(fn) {
-      return fn && !!fn.effect;
-  }
-  function effect(fn, scheduler = undefined, allowRecurse = false, lazy = false, options = undefined) {
-      if (isEffect(fn)) {
-          fn = fn.effect.raw;
-      }
-      const effect = createReactiveEffect(fn, allowRecurse, scheduler, options);
-      if (!lazy) {
-          effect.run();
-      }
-      return effect;
-  }
-  function stop(effect) {
-      if (effect.active) {
-          cleanup(effect);
-          if (effect.options.onStop) {
-              effect.options.onStop();
-          }
-          effect.active = false;
-      }
-  }
-  let uid = 0;
-  function cleanup(effect) {
-      const { deps } = effect;
-      if (deps.length) {
-          for (let i = 0; i < deps.length; i++) {
-              deps[i].delete(effect);
-          }
-          deps.length = 0;
-      }
-  }
-  let shouldTrack = true;
-  const trackStack = [];
-  function pauseTracking() {
-      trackStack.push(shouldTrack);
-      shouldTrack = false;
-  }
-  function enableTracking() {
-      trackStack.push(shouldTrack);
-      shouldTrack = true;
-  }
-  function resetTracking() {
-      const last = trackStack.pop();
-      shouldTrack = last === undefined ? true : last;
-  }
-  function track(target, type, key) {
-      if (!shouldTrack || activeEffect === undefined) {
-          return;
-      }
-      let depsMap = targetMap.get(target);
-      if (!depsMap) {
-          targetMap.set(target, (depsMap = new Map()));
-      }
-      let dep = depsMap.get(key);
-      if (!dep) {
-          depsMap.set(key, (dep = new Set()));
-      }
-      if (!dep.has(activeEffect)) {
-          dep.add(activeEffect);
-          activeEffect.deps.push(dep);
-          if ( activeEffect.options.onTrack) {
-              activeEffect.options.onTrack({
-                  effect: activeEffect,
-                  target,
-                  type,
-                  key
-              });
-          }
-      }
-  }
-  function trackRefTarget(ref) {
-      if (!shouldTrack || activeEffect === undefined) {
-          return;
-      }
+  function triggerRefValue(ref, newVal) {
       ref = toRaw(ref);
-      if (!ref.dep) {
-          ref.dep = new Set();
-      }
-      const dep = ref.dep;
-      if (!dep.has(activeEffect)) {
-          dep.add(activeEffect);
-          activeEffect.deps.push(dep);
-          if ( activeEffect.options.onTrack) {
-              activeEffect.options.onTrack({
-                  effect: activeEffect,
-                  target: ref,
-                  type: "get" /* GET */,
-                  key: 'value'
-              });
-          }
+      if (ref.dep) {
+          const eventInfo =  { target: ref, type: "set" /* SET */, key: 'value', newValue: newVal } ;
+          triggerEffects(ref.dep, eventInfo);
       }
   }
-  function trigger(target, type, key, newValue, oldValue, oldTarget) {
-      const depsMap = targetMap.get(target);
-      if (!depsMap) {
-          // never been tracked
-          return;
-      }
-      const effects = new Set();
-      const add = (effectsToAdd) => {
-          if (effectsToAdd) {
-              effectsToAdd.forEach(effect => {
-                  if (effect !== activeEffect || effect.allowRecurse) {
-                      effects.add(effect);
-                  }
-              });
-          }
-      };
-      if (type === "clear" /* CLEAR */) {
-          // collection being cleared
-          // trigger all effects for target
-          depsMap.forEach(add);
-      }
-      else if (key === 'length' && isArray(target)) {
-          depsMap.forEach((dep, key) => {
-              if (key === 'length' || key >= newValue) {
-                  add(dep);
-              }
-          });
-      }
-      else {
-          // schedule runs for SET | ADD | DELETE
-          if (key !== void 0) {
-              add(depsMap.get(key));
-          }
-          // also run for iteration key on ADD | DELETE | Map.SET
-          switch (type) {
-              case "add" /* ADD */:
-                  if (!isArray(target)) {
-                      add(depsMap.get(ITERATE_KEY));
-                      if (isMap(target)) {
-                          add(depsMap.get(MAP_KEY_ITERATE_KEY));
-                      }
-                  }
-                  else if (isIntegerKey(key)) {
-                      // new index added to array -> length changes
-                      add(depsMap.get('length'));
-                  }
-                  break;
-              case "delete" /* DELETE */:
-                  if (!isArray(target)) {
-                      add(depsMap.get(ITERATE_KEY));
-                      if (isMap(target)) {
-                          add(depsMap.get(MAP_KEY_ITERATE_KEY));
-                      }
-                  }
-                  break;
-              case "set" /* SET */:
-                  if (isMap(target)) {
-                      add(depsMap.get(ITERATE_KEY));
-                  }
-                  break;
-          }
-      }
-      const run = (effect) => {
-          if ( effect.options.onTrigger) {
-              effect.options.onTrigger({
-                  effect,
-                  target,
-                  key,
-                  type,
-                  newValue,
-                  oldValue,
-                  oldTarget
-              });
-          }
-          if (effect.scheduler) {
-              effect.scheduler(effect.func);
-          }
-          else {
-              effect.run();
-          }
-      };
-      effects.forEach(run);
-  }
-  function triggerRefTarget(ref, newValue, oldValue, oldTarget) {
-      ref = toRaw(ref);
-      if (!ref.dep) {
-          return;
-      }
-      const run = (effect) => {
-          if ( effect.options.onTrigger) {
-              effect.options.onTrigger({
-                  effect,
-                  target: ref,
-                  key: 'value',
-                  type: "set" /* SET */,
-                  newValue,
-                  oldValue,
-                  oldTarget
-              });
-          }
-          if (effect.scheduler) {
-              effect.scheduler(effect.func);
-          }
-          else {
-              effect.run();
-          }
-      };
-      const immutableDeps = [...ref.dep];
-      immutableDeps.forEach(effect => {
-          if (effect !== activeEffect || effect.allowRecurse) {
-              run(effect);
-          }
-      });
-  }
-
   const convert = (val) => isObject(val) ? reactive(val) : val;
   function isRef(r) {
       return Boolean(r && r.__v_isRef === true);
@@ -1150,21 +1125,21 @@ var Vue = (function (exports) {
       constructor(_rawValue, _shallow = false) {
           this._rawValue = _rawValue;
           this._shallow = _shallow;
-          this.__v_isRef = true;
           this._value = _shallow ? _rawValue : convert(_rawValue);
       }
       get value() {
-          trackRefTarget(this);
+          trackRefValue(this);
           return this._value;
       }
       set value(newVal) {
           if (hasChanged(toRaw(newVal), this._rawValue)) {
               this._rawValue = newVal;
               this._value = this._shallow ? newVal : convert(newVal);
-              triggerRefTarget(this, newVal);
+              triggerRefValue(this, newVal);
           }
       }
   }
+  RefImpl.prototype.__v_isRef = true;
   function createRef(rawValue, shallow = false) {
       if (isRef(rawValue)) {
           return rawValue;
@@ -1172,7 +1147,7 @@ var Vue = (function (exports) {
       return new RefImpl(rawValue, shallow);
   }
   function triggerRef(ref) {
-      triggerRefTarget(ref,  ref.value );
+      triggerRefValue(ref,  ref.value );
   }
   function unref(ref) {
       return isRef(ref) ? ref.value : ref;
@@ -1197,8 +1172,7 @@ var Vue = (function (exports) {
   }
   class CustomRefImpl {
       constructor(factory) {
-          this.__v_isRef = true;
-          const { get, set } = factory(() => trackRefTarget(this), () => triggerRefTarget(this));
+          const { get, set } = factory(() => trackRefValue(this), () => triggerRefValue(this));
           this._get = get;
           this._set = set;
       }
@@ -1209,6 +1183,7 @@ var Vue = (function (exports) {
           this._set(newVal);
       }
   }
+  CustomRefImpl.prototype.__v_isRef = true;
   function customRef(factory) {
       return new CustomRefImpl(factory);
   }
@@ -1245,11 +1220,10 @@ var Vue = (function (exports) {
       constructor(getter, _setter, isReadonly) {
           this._setter = _setter;
           this._dirty = true;
-          this.__v_isRef = true;
           this.effect = effect(getter, () => {
               if (!this._dirty) {
                   this._dirty = true;
-                  triggerRefTarget(this);
+                  triggerRefValue(this);
               }
           }, false, true);
           this["__v_isReadonly" /* IS_READONLY */] = isReadonly;
@@ -1259,13 +1233,14 @@ var Vue = (function (exports) {
               this._value = this.effect.run();
               this._dirty = false;
           }
-          trackRefTarget(this);
+          trackRefValue(this);
           return this._value;
       }
       set value(newValue) {
           this._setter(newValue);
       }
   }
+  ComputedRefImpl.prototype.__v_isRef = true;
   function computed(getterOrOptions) {
       let getter;
       let setter;
