@@ -8,6 +8,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/platform/1.3.6/platform.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/benchmark/2.1.4/benchmark.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.4/Chart.js"></script>
+
+    <style src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.4/Chart.css"></style>
 
     <style>
       input {
@@ -56,6 +59,12 @@
       .benchmark-name {
         text-decoration: underline;
       }
+
+      #func {
+        display: block;
+        width: 100%;
+        height: 200px;
+      }
     </style>
   </head>
   <body>
@@ -75,9 +84,11 @@
 
     <label for="standalone">profile run</label>
     <input type="text" id="standalone" placeholder="Example: ref:write ref" value="" />
+    <textarea type="text" id="func" placeholder="Code block that should return a function to be benchmarked" value=""></textarea>
     <label for="iterations">profile iterations</label>
     <input type="text" id="iterations" value="100_000" />
     <button onclick="standalone()">Start profile run</button>
+    <canvas id="chart" style="display: none"></canvas>
 
     <p>Link usage: <pre>?v=3.0.0-rc.12&b=ref,computed</pre></p>
 

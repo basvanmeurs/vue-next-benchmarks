@@ -15,6 +15,8 @@ const results = document.getElementById("results");
 const standaloneInput = document.getElementById("standalone");
 const iterationsInput = document.getElementById("iterations");
 
+const funcTextarea = document.getElementById("func");
+
 // This allows aborting and outputting while tests are being run.
 Benchmark.options.async = true;
 
@@ -131,15 +133,22 @@ window.standalone = function() {
   const v = standaloneInput.value;
   const index = v.indexOf(":");
   if (index === -1) {
-    alert("Format: {name}:{benchmark}");
+    const funcBody = funcTextarea.value;
+    if (!funcBody) {
+      alert("Format: {name}:{benchmark}");
+    } else {
+      const fb = new Function(funcBody);
+      const f = fb();
+      startStandalone(f, false)
+    }
   } else {
     const name = v.substr(0, index).trim();
     const bench = v.substr(index + 1).trim();
-    startStandalone(name, bench);
+    startStandaloneBenchmark(name, bench);
   }
 }
 
-async function startStandalone(name, benchmarkName) {
+async function startStandaloneBenchmark(name, benchmarkName) {
   let url = getUrl();
 
   log("Use Vue3: " + url);
@@ -167,15 +176,73 @@ async function startStandalone(name, benchmarkName) {
     return;
   }
 
+  const f = bench.fn;
+  const defer = bench.defer;
+
+  startStandalone(f, defer, benchmarkName);
+}
+
+function startStandalone(f, defer, benchmarkName = "benchmark") {
   const iterations = parseInt(iterationsInput.value.replace(/_/g, "")) || 1e4;
   log("Iterations: " + iterations);
 
-  const f = bench.fn;
+
+  const measurements = [];
+  const measurementSteps = [];
+  const steps = 1000;
+  const iterstationsPerStep = Math.floor(iterations / steps);
   console.profile(benchmarkName);
+  let start = performance.now();
   for (let i = 0; i < iterations; i++) {
-    f();
+    runFunc(f, defer);
+    if (i % iterstationsPerStep === 0) {
+      const s = start;
+      start = performance.now();
+      const delta = (start - s) / iterstationsPerStep;
+      measurements.push(delta);
+      measurementSteps.push(i);
+    }
   }
   console.profileEnd(benchmarkName);
+  console.log(measurements);
+
+  drawChart(measurements, measurementSteps, iterstationsPerStep);
+
+
+}
+
+function drawChart(measurements, measurementSteps, itsPerStep) {
+  const chartEl = document.getElementById('chart');
+  chartEl.style.display = "block";
+  const ctx = chartEl.getContext('2d');
+  var chart = new Chart(ctx, {
+    // The type of chart we want to create
+    type: 'line',
+
+    // The data for our dataset
+    data: {
+      labels: measurementSteps,
+      datasets: [{
+        label: 'Average times (average per ' + itsPerStep + ' calls)',
+        backgroundColor: 'rgb(255, 99, 132)',
+        borderColor: 'rgb(255, 99, 132)',
+        data: measurements
+      }]
+    },
+
+    // Configuration options go here
+    options: {}
+  });
+}
+
+async function runFunc(fn, async) {
+  if (async) {
+    return new Promise((resolve, reject) => {
+      fn({resolve})
+    });
+  } else {
+    fn();
+  }
 }
 
 function injectScript(src) {
