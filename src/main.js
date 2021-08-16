@@ -1,6 +1,6 @@
 const queryParams = new URLSearchParams(window.location.search);
 const version = queryParams.get("v");
-const available = ["ref", "computed", "watch", "watchEffect", "mix", "reactiveObject", "reactiveMap"];
+const available = ["ref", "computed", "watch", "watchEffect", "mix", "reactiveObject", "reactiveMap", "reactiveArray"];
 
 const urlInput = document.getElementById("url");
 urlInput.value = version || "3.0.0";
