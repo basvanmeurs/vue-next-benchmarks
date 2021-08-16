@@ -22,6 +22,21 @@ function go() {
       });
     });
 
+    bench(() => {
+      const rawArray = [];
+      for (let i = 0, n = amount; i < n; i++) {
+        rawArray.push(i)
+      }
+      const r = reactive(rawArray);
+      const c = computed(() => {
+        return r.reduce((v, a) => a + v, 0)
+      });
+
+      return suite.add(`reduce *reactive* array, ${amount} elements, only change first value`, () => {
+        r[0]++
+        const value = c.value
+      });
+    });
 
     bench(() => {
       const rawArray = [];

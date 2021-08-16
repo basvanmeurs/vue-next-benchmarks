@@ -3,7 +3,7 @@ const version = queryParams.get("v");
 const available = ["ref", "computed", "watch", "watchEffect", "mix", "reactiveObject", "reactiveMap", "reactiveArray"];
 
 const urlInput = document.getElementById("url");
-urlInput.value = version || "3.0.0";
+urlInput.value = version || "3.2.2";
 
 const benchmarksInput = document.getElementById("benchmarks");
 benchmarksInput.value = queryParams.get("b") || available.join(",");
@@ -51,7 +51,7 @@ const semverRegex = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*
 function getUrl() {
   let url = urlInput.value;
   if (url.trim() === "") {
-    url = "vue.global.js";
+    alert("Please enter URL");
   } else if (semverRegex.test(url)) {
     url = `https://cdnjs.cloudflare.com/ajax/libs/vue/${url}/vue.global.js`;
   }
